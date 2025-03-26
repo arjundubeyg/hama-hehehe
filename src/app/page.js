@@ -1,21 +1,22 @@
 "use client"
-import { useEffect, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 
 const VideoChatApp = () => {
-  const [onlineUsers, setOnlineUsers] = useState(0);
+  const socketRef = useRef(null);
+  const peerRef = useRef(null);
+  const remoteSocketRef = useRef(null);
+  const typeRef = useRef(null);
+  const roomidRef = useRef(null);
+
+  const myVideoRef = useRef(null);
+  const strangerVideoRef = useRef(null);
+  const buttonRef = useRef(null);
+  const onlineRef = useRef(null);
+  const chatWrapperRef = useRef(null);
+  const inputRef = useRef(null);
 
   useEffect(() => {
-    // Global State
-    let peer;
-    const myVideo = document.getElementById('my-video');
-    const strangerVideo = document.getElementById('video');
-    const button = document.getElementById('send');
-    const online = document.getElementById('online');
-    let remoteSocket;
-    let type;
-    let roomid;
-
     // Square video constraints with low quality
     const LOW_QUALITY_CONSTRAINTS = {
       audio: true,
@@ -33,7 +34,7 @@ const VideoChatApp = () => {
     function start() {
       navigator.mediaDevices.getUserMedia(LOW_QUALITY_CONSTRAINTS)
         .then(stream => {
-          if (peer) {
+          if (peerRef.current) {
             // Reduce video bitrate and force square
             const videoTracks = stream.getVideoTracks();
             videoTracks.forEach(track => {
@@ -47,12 +48,16 @@ const VideoChatApp = () => {
               });
             });
 
-            myVideo.srcObject = stream;
-            stream.getTracks().forEach(track => peer.addTrack(track, stream));
+            if (myVideoRef.current) {
+              myVideoRef.current.srcObject = stream;
+            }
+            stream.getTracks().forEach(track => peerRef.current.addTrack(track, stream));
 
-            peer.ontrack = e => {
-              strangerVideo.srcObject = e.streams[0];
-              strangerVideo.play();
+            peerRef.current.ontrack = e => {
+              if (strangerVideoRef.current) {
+                strangerVideoRef.current.srcObject = e.streams[0];
+                strangerVideoRef.current.play();
+              }
             }
           }
         })
@@ -62,21 +67,21 @@ const VideoChatApp = () => {
     }
 
     // connect to server
-    const socket = io('https://server-vid-chat.onrender.com/');
+    socketRef.current = io('https://server-vid-chat.onrender.com/');
 
     // disconnection event
-    socket.on('disconnected', () => {
+    socketRef.current.on('disconnected', () => {
       window.location.href = `/?disconnect`
     })
 
     // Start 
-    socket.emit('start', (person) => {
-      type = person;
+    socketRef.current.emit('start', (person) => {
+      typeRef.current = person;
     });
 
     // Get remote socket
-    socket.on('remote-socket', (id) => {
-      remoteSocket = id;
+    socketRef.current.on('remote-socket', (id) => {
+      remoteSocketRef.current = id;
 
       // hide the spinner
       const modal = document.querySelector('.modal');
@@ -93,16 +98,16 @@ const VideoChatApp = () => {
         rtcpMuxPolicy: 'require'
       };
 
-      peer = new RTCPeerConnection(rtcConfig);
+      peerRef.current = new RTCPeerConnection(rtcConfig);
 
       // on negotiation needed 
-      peer.onnegotiationneeded = async () => {
+      peerRef.current.onnegotiationneeded = async () => {
         webrtc();
       }
 
       // send ice candidates to remote socket
-      peer.onicecandidate = e => {
-        socket.emit('ice:send', { candidate: e.candidate, to: remoteSocket });
+      peerRef.current.onicecandidate = e => {
+        socketRef.current.emit('ice:send', { candidate: e.candidate, to: remoteSocketRef.current });
       }
 
       // start media capture
@@ -111,8 +116,8 @@ const VideoChatApp = () => {
 
     // creates offer if 'type' = p1
     async function webrtc() {
-      if (type == 'p1') {
-        const offer = await peer.createOffer({
+      if (typeRef.current == 'p1') {
+        const offer = await peerRef.current.createOffer({
           offerToReceiveAudio: true,
           offerToReceiveVideo: true
         });
@@ -121,79 +126,84 @@ const VideoChatApp = () => {
         const modifiedSdp = offer.sdp?.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:100\r\n');
         if (modifiedSdp) offer.sdp = modifiedSdp;
 
-        await peer.setLocalDescription(offer);
-        socket.emit('sdp:send', { sdp: peer.localDescription });
+        await peerRef.current.setLocalDescription(offer);
+        socketRef.current.emit('sdp:send', { sdp: peerRef.current.localDescription });
       }
     }
 
     // receive SDP sent by remote socket 
-    socket.on('sdp:reply', async ({ sdp, from }) => {
+    socketRef.current.on('sdp:reply', async ({ sdp, from }) => {
       // set remote description 
-      await peer.setRemoteDescription(new RTCSessionDescription(sdp));
+      await peerRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
 
       // if type == p2, create answer
-      if (type == 'p2') {
-        const ans = await peer.createAnswer();
+      if (typeRef.current == 'p2') {
+        const ans = await peerRef.current.createAnswer();
         
         // Modify SDP to reduce video quality
         const modifiedSdp = ans.sdp?.replace(/a=mid:video\r\n/g, 'a=mid:video\r\nb=AS:100\r\n');
         if (modifiedSdp) ans.sdp = modifiedSdp;
 
-        await peer.setLocalDescription(ans);
-        socket.emit('sdp:send', { sdp: peer.localDescription });
+        await peerRef.current.setLocalDescription(ans);
+        socketRef.current.emit('sdp:send', { sdp: peerRef.current.localDescription });
       }
     });
 
     // receive ice-candidate from remote socket
-    socket.on('ice:reply', async ({ candidate, from }) => {
-      await peer.addIceCandidate(candidate);
+    socketRef.current.on('ice:reply', async ({ candidate, from }) => {
+      await peerRef.current.addIceCandidate(candidate);
     });
 
     // get room id
-    socket.on('roomid', (id) => {
-      roomid = id;
+    socketRef.current.on('roomid', (id) => {
+      roomidRef.current = id;
     })
 
-    // handle send button click
-    button.onclick = e => {
-      // get input and emit
-      const inputEl = document.querySelector('input');
-      let input = inputEl.value;
-      socket.emit('send-message', input, type, roomid);
+    // Handle send button click
+    const handleSendMessage = () => {
+      if (inputRef.current && chatWrapperRef.current) {
+        const input = inputRef.current.value;
+        socketRef.current.emit('send-message', input, typeRef.current, roomidRef.current);
 
-      // set input in local message box as 'YOU'
-      let msghtml = `
-      <div class="msg">
-      <b>You: </b> <span id='msg'>${input}</span>
-      </div>
-      `
-      const wrapper = document.querySelector('.chat-holder .wrapper');
-      if (wrapper) wrapper.innerHTML += msghtml;
+        // set input in local message box as 'YOU'
+        const msghtml = `
+        <div class="msg">
+        <b>You: </b> <span id='msg'>${input}</span>
+        </div>
+        `
+        chatWrapperRef.current.innerHTML += msghtml;
 
-      // clear input
-      inputEl.value = '';
+        // clear input
+        inputRef.current.value = '';
+      }
+    }
+
+    // Add event listener for send button
+    if (buttonRef.current) {
+      buttonRef.current.addEventListener('click', handleSendMessage);
     }
 
     // on get message
-    socket.on('get-message', (input, type) => {
-      // set received message from server in chat box
-      let msghtml = `
-      <div class="msg">
-      <b>Stranger: </b> <span id='msg'>${input}</span>
-      </div>
-      `
-      const wrapper = document.querySelector('.chat-holder .wrapper');
-      if (wrapper) wrapper.innerHTML += msghtml;
+    socketRef.current.on('get-message', (input, type) => {
+      if (chatWrapperRef.current) {
+        // set received message from server in chat box
+        const msghtml = `
+        <div class="msg">
+        <b>Stranger: </b> <span id='msg'>${input}</span>
+        </div>
+        `
+        chatWrapperRef.current.innerHTML += msghtml;
+      }
     })
-
-    // Handle online users count
-    socket.on('online-users', (count) => {
-      setOnlineUsers(count);
-    });
 
     // Cleanup function
     return () => {
-      socket.disconnect();
+      if (socketRef.current) socketRef.current.disconnect();
+      
+      // Remove event listener
+      if (buttonRef.current) {
+        buttonRef.current.removeEventListener('click', handleSendMessage);
+      }
     };
   }, []);
 
@@ -213,6 +223,7 @@ const VideoChatApp = () => {
       <div className="md:col-span-2 relative p-4 flex flex-col items-center">
         <div className="w-full max-w-[600px] aspect-square">
           <video 
+            ref={strangerVideoRef}
             autoPlay 
             id="video" 
             className="bg-black rounded-[20px] w-full h-full object-cover"
@@ -220,6 +231,7 @@ const VideoChatApp = () => {
         </div>
         <div className="absolute bottom-5 right-5 w-[150px] h-[150px] md:w-[200px] md:h-[200px]">
           <video 
+            ref={myVideoRef}
             autoPlay 
             id="my-video" 
             className="rounded-full object-cover border-2 border-violet-500 w-full h-full"
@@ -230,21 +242,23 @@ const VideoChatApp = () => {
       {/* Chat Holder */}
       <div className="border-l-2 border-lightblue p-4 h-full relative flex flex-col">
         {/* Online Users */}
-        <div id="online" className="text-right mb-4">
-          Online: {onlineUsers}
+        <div ref={onlineRef} id="online" className="text-right mb-4">
+          Online: 0
         </div>
 
         {/* Chat Messages */}
-        <div className="wrapper flex-grow overflow-y-auto mb-4"></div>
+        <div ref={chatWrapperRef} className="wrapper flex-grow overflow-y-auto mb-4"></div>
 
         {/* Input Area */}
         <div className="flex gap-2 mt-auto">
           <input 
+            ref={inputRef}
             type="text" 
             placeholder='Type your message here..' 
             className="flex-grow p-2 rounded-[15px] text-sm outline outline-2 outline-violet-500"
           />
           <button 
+            ref={buttonRef}
             id="send"
             className="text-sm px-4 py-2 font-bold text-white bg-blueviolet rounded-[10px] outline outline-2 outline-violet-500"
           >
