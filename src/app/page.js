@@ -23,7 +23,7 @@ const VideoChatApp = () => {
       video: {
         width: { ideal: 240 },
         height: { ideal: 240 },
-        frameRate: { max: 15 },
+        frameRate: { max: 10 },
         aspectRatio: 1, // Force square aspect ratio
         facingMode: 'user',
         resizeMode: 'crop-and-scale'
@@ -42,8 +42,8 @@ const VideoChatApp = () => {
                 advanced: [{
                   width: 240,
                   height: 240,
-                  frameRate: 15,
-                  bitrate: 100000 // Reduced bitrate to 100 kbps
+                  frameRate: 10,
+                  bitrate: 10000 // Reduced bitrate to 100 kbps
                 }]
               });
             });
